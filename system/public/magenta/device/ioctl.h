@@ -57,6 +57,8 @@
 #define IOCTL_FAMILY_WLAN           0x24
 #define IOCTL_FAMILY_PTY            0x25
 #define IOCTL_FAMILY_NETCONFIG      0x26
+#define IOCTL_FAMILY_USB_DEVICE     0x27
+#define IOCTL_FAMILY_USB_VIRT_BUS   0x28
 
 // IOCTL constructor
 // --K-FFNN
