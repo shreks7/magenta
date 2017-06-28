@@ -320,9 +320,9 @@ mx_status_t sys_pci_cfg_pio_rw(uint8_t bus, uint8_t dev, uint8_t func, uint8_t o
 
     if (write) {
         val.copy_from_user(&val_);
-        status = PCI::PioCfgWrite(bus, dev, func, offset, val_, width);
+        status = Pci::PioCfgWrite(bus, dev, func, offset, val_, width);
     } else {
-        status = PCI::PioCfgRead(bus, dev, func, offset, &val_, width);
+        status = Pci::PioCfgRead(bus, dev, func, offset, &val_, width);
         if (status == MX_OK) {
             val.copy_to_user(val_);
         }
