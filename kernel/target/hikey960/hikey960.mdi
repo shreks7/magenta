@@ -78,7 +78,35 @@ platform = {
                 base-phys = GPIO_28_ADDR
                 length = PAGE_SIZE
             }
+            {
+                // USB3OTG_BC
+                base-phys = 0xff200000
+                length = 0x1000
+            }
+            {
+                // PERI_CRG
+                base-phys = 0xfff35000
+                length = 0x1000
+            }
+            {
+                // PCTRL
+                base-phys = 0xe8a09000
+                length = 0x1000
+            }
+            {
+                // SCTRL
+                base-phys = 0xfff0a000
+                length = 0x1000
+            }
+            {
+                // PMCTRL
+                base-phys = 0xfff31000
+                length = 0x1000
+            }
         }
+        irqs = [ 193 /* USB3_OTG */,
+                 194 /* USB3_BC */,
+               ]
         gpios = {
             {
                 // GPIO groups 0 - 17
@@ -116,5 +144,22 @@ platform = {
                 irqs = [173]
             }
         }
+    }
+    device = {
+        name = "dwc3"
+        vid = PDEV_VID_GENERIC
+        pid = PDEV_PID_GENERIC
+        did = PDEV_DID_USB_DWC3
+        mmios = {
+            {
+                name = "USB3OTG"
+                base-phys = 0xff100000
+                length = 0x100000
+            }
+        }
+        irqs = [ 191 /* USB3 */,
+                 193 /* USB3_OTG */,
+                 194 /* USB3_BC */,
+               ]
     }
 }

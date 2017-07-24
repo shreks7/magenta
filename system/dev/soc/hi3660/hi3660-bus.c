@@ -19,8 +19,18 @@
 #include <magenta/syscalls.h>
 #include <magenta/assert.h>
 
-#include "hi3660-bus.h"
 #include "pl061.h"
+#include "hi3660-bus.h"
+
+// MMIO indices
+enum {
+    // GPIO MMIOs first
+    MMIO_USB3OTG_BC = 5,
+    MMIO_PERI_CRG,
+    MMIO_PCTRL,
+    MMIO_SCTRL,
+    MMIO_PMCTRL,
+};
 
 static pl061_gpios_t* find_gpio(hi3660_bus_t* bus, unsigned pin) {
     pl061_gpios_t* gpios;
@@ -116,9 +126,8 @@ static mx_status_t hi3660_add_gpios(void* ctx, uint32_t start, uint32_t count, u
         return MX_ERR_NO_MEMORY;
     }
 
-    mx_status_t status = pdev_map_mmio(&bus->pdev, mmio_index, MX_CACHE_POLICY_UNCACHED_DEVICE,
-                                       (void *)&gpios->mmio_base, &gpios->mmio_size,
-                                       &gpios->mmio_handle);
+    mx_status_t status = pdev_map_mmio_buffer(&bus->pdev, mmio_index, MX_CACHE_POLICY_UNCACHED_DEVICE,
+                                              &gpios->buffer);
     if (status != MX_OK) {
         free(gpios);
         return status;
@@ -144,10 +153,15 @@ static void hi3660_release(void* ctx) {
     pl061_gpios_t* gpios;
 
     while ((gpios = list_remove_head_type(&bus->gpios, pl061_gpios_t, node)) != NULL) {
-        mx_vmar_unmap(mx_vmar_root_self(), (uintptr_t)gpios->mmio_base, gpios->mmio_size);
-        mx_handle_close(gpios->mmio_handle);
+        pdev_mmio_buffer_release(&gpios->buffer);
         free(gpios);
     }
+
+    pdev_mmio_buffer_release(&bus->usb3otg_bc);
+    pdev_mmio_buffer_release(&bus->peri_crg);
+    pdev_mmio_buffer_release(&bus->pctrl);
+    pdev_mmio_buffer_release(&bus->sctrl);
+    pdev_mmio_buffer_release(&bus->pmctrl);
 
     free(bus);
 }
@@ -204,6 +218,24 @@ static mx_status_t hi3660_bind(void* ctx, mx_device_t* parent, void** cookie) {
     list_initialize(&bus->gpios);
     memcpy(&bus->pdev, &pdev, sizeof(bus->pdev));
 
+    mx_status_t status;
+    if ((status = pdev_map_mmio_buffer(&pdev, MMIO_USB3OTG_BC, MX_CACHE_POLICY_UNCACHED_DEVICE,
+                                       &bus->usb3otg_bc)) != MX_OK ||
+         (status = pdev_map_mmio_buffer(&pdev, MMIO_PERI_CRG, MX_CACHE_POLICY_UNCACHED_DEVICE,
+                                       &bus->peri_crg)) != MX_OK ||
+         (status = pdev_map_mmio_buffer(&pdev, MMIO_PCTRL, MX_CACHE_POLICY_UNCACHED_DEVICE,
+                                       &bus->pctrl)) != MX_OK ||
+         (status = pdev_map_mmio_buffer(&pdev, MMIO_SCTRL, MX_CACHE_POLICY_UNCACHED_DEVICE,
+                                       &bus->sctrl)) != MX_OK ||
+         (status = pdev_map_mmio_buffer(&pdev, MMIO_PMCTRL, MX_CACHE_POLICY_UNCACHED_DEVICE,
+                                       &bus->pmctrl)) != MX_OK) {
+        goto fail;
+    }
+
+    if ((status = hi3360_usb_init(bus)) != MX_OK) {
+        goto fail;
+    }
+
     device_add_args_t args = {
         .version = DEVICE_ADD_ARGS_VERSION,
         .name = "hi3660-bus",
@@ -213,10 +245,9 @@ static mx_status_t hi3660_bind(void* ctx, mx_device_t* parent, void** cookie) {
         .flags = DEVICE_ADD_NON_BINDABLE,
     };
 
-    mx_status_t status = device_add(parent, &args, NULL);
+    status = device_add(parent, &args, NULL);
     if (status != MX_OK) {
-        free(bus);
-        return status;
+        goto fail;
     }
 
     pbus_interface_t intf;
@@ -230,6 +261,11 @@ static mx_status_t hi3660_bind(void* ctx, mx_device_t* parent, void** cookie) {
 #endif
 
     return MX_OK;
+
+fail:
+    printf("hi3660_bind failed %d\n", status);
+    hi3660_release(bus);
+    return status;
 }
 
 static mx_driver_ops_t hi3660_driver_ops = {
