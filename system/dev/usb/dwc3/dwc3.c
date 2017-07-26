@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <threads.h>
 #include <unistd.h>
 
 #include "dwc3-regs.h"
@@ -32,8 +33,29 @@ typedef struct {
     mx_device_t* mxdev;
     usb_dci_interface_t dci_intf;
     pdev_mmio_buffer_t usb3otg;
+    mx_handle_t irq_handle;
+    thrd_t irq_thread;
 } usb_dwc3_t;
 
+
+static int dwc_irq_thread(void* arg) {
+    usb_dwc3_t* dwc = arg;
+
+    while (1) {
+        mx_status_t status = mx_interrupt_wait(dwc->irq_handle);
+        if (status != MX_OK) {
+            printf("mx_interrupt_wait returned %d\n", status);
+            mx_interrupt_complete(dwc->irq_handle);
+            break;
+        }
+
+        mx_interrupt_complete(dwc->irq_handle);
+        printf("dwc_irq_thread got interrupt\n");
+    }
+
+    printf("dwc_irq_thread done\n");
+    return 0;
+}
 
 static void dwc3_wait_bits(volatile uint32_t* ptr, uint32_t bits, uint32_t expected) {
     uint32_t value = readl(ptr);
@@ -44,22 +66,18 @@ static void dwc3_wait_bits(volatile uint32_t* ptr, uint32_t bits, uint32_t expec
 }
 
 static mx_status_t dwc3_start(usb_dwc3_t* dwc) {
+printf("dwc3_start\n");
     // set device mode
-printf("set device mode\n");
     volatile void* usb3otg = dwc->usb3otg.vaddr;
     uint32_t temp = readl(usb3otg + GCTL);
-printf("GCTL: %08X\n", temp);
     temp &= ~GCTL_PRTCAPDIR_MASK;
     temp |= GCTL_PRTCAPDIR_HOST;
     writel(temp, usb3otg + GCTL);
-printf("GCTL: %08X\n", temp);
 
-printf("soft reset\n");
     temp = readl(usb3otg + DCTL);
     temp |= DCTL_CSFTRST;
     writel(temp, usb3otg + DCTL);
     dwc3_wait_bits(usb3otg + DCTL, DCTL_CSFTRST, 0);
-printf("did soft reset\n");
 
     printf("global registers:\n");
     hexdump(dwc->usb3otg.vaddr + GSBUSCFG0, 256);
@@ -98,12 +116,16 @@ usb_dci_protocol_ops_t dwc_dci_protocol = {
 
 static void dwc3_unbind(void* ctx) {
     usb_dwc3_t* dwc = ctx;
+
+    mx_interrupt_signal(dwc->irq_handle);
+    thrd_join(dwc->irq_thread, NULL);
     device_remove(dwc->mxdev);
 }
 
 static void dwc3_release(void* ctx) {
     usb_dwc3_t* dwc = ctx;
     pdev_mmio_buffer_release(&dwc->usb3otg);
+    mx_handle_close(dwc->irq_handle);
     free(dwc);
 }
 
@@ -132,6 +154,11 @@ static mx_status_t dwc3_bind(void* ctx, mx_device_t* dev, void** cookie) {
         goto fail;
     }
 
+    status = pdev_map_interrupt(&pdev, IRQ_USB3, &dwc->irq_handle);
+    if (status != MX_OK) {
+        goto fail;
+    }
+
     device_add_args_t args = {
         .version = DEVICE_ADD_ARGS_VERSION,
         .name = "dwc3",
@@ -145,6 +172,8 @@ static mx_status_t dwc3_bind(void* ctx, mx_device_t* dev, void** cookie) {
     if (status != MX_OK) {
         goto fail;
     }
+
+    thrd_create_with_name(&dwc->irq_thread, dwc_irq_thread, dwc, "dwc_irq_thread");
 
     return MX_OK;
 
